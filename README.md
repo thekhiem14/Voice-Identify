@@ -9,14 +9,14 @@ audio + voice samples
   -> DiariZen diarization
   -> remap cluster + merge gap <= 2 s (tối đa 20 s)
   -> clean 10 s cluster enrollment
-  -> ERes2Net cosine verification trên cửa sổ <= 8 s (threshold 0.40)
+  -> CAM++ cosine verification trên cửa sổ <= 8 s (threshold 0.33)
   -> majority vote + hard override
   -> Gipformer Vietnamese ASR trên segment merge, bỏ segment < 1.5 s
   -> result.json
 ```
 
 Trong `result.json`, `segments` là timeline đã merge dùng cho ASR; `identity_windows`
-giữ bằng chứng ERes2Net chi tiết theo cửa sổ để không làm mất thông tin voice identify.
+giữ bằng chứng CAM++ chi tiết theo cửa sổ để không làm mất thông tin voice identify.
 Gipformer luôn đọc bản mono 16 kHz chưa khử nhiễu, kể cả khi bật enhancement, vì
 denoise có thể làm méo thanh điệu tiếng Việt; phần preprocess/enhancement vẫn được
 giữ cho các tầng diarization và voice identify.
@@ -42,24 +42,27 @@ powershell -ExecutionPolicy Bypass -File scripts/install_gpu.ps1
 
 Script cài `torch`/`torchaudio` CUDA 12.8, dependency khử nhiễu và kiểm tra
 `torch.cuda.is_available()` trước khi báo thành công. Cấu hình mặc định dùng `cuda:0`,
-DiariZen và ERes2Net dùng GPU; Gipformer mặc định dùng `provider=cpu` và decode
+DiariZen và CAM++ dùng GPU; Gipformer mặc định dùng `provider=cpu` và decode
 tuần tự (`ASR_BATCH_SIZE=1`) giống notebook. Cấu hình này tránh tranh chấp VRAM,
 tránh attention encoder tạo allocation hơn 1 GB và trên máy thử nghiệm còn nhanh
 hơn CUDA tuần tự. Có thể bật `ASR_PROVIDER=cuda`, nhưng nên giữ batch size 1.
+CAM++ ghép tối đa 16 cửa sổ có cùng chính xác độ dài feature trong một batch
+(`VOICE_ID_BATCH_SIZE=16`), nên không cần padding và không làm lệch embedding.
 
-Console in tiến độ DiariZen, ERes2Net và Gipformer mỗi 100 chunk/segment. Có thể
+Console in tiến độ DiariZen, CAM++ và Gipformer mỗi 100 chunk/segment. Có thể
 đổi tần suất bằng `PROGRESS_LOG_EVERY` trong `.env`.
 
 Setup tải/cài mã nguồn chính thức của
 [DiariZen](https://github.com/BUTSpeechFIT/DiariZen),
-[3D-Speaker/ERes2Net](https://github.com/modelscope/3D-Speaker) và checkpoint
+[3D-Speaker/CAM++](https://github.com/modelscope/3D-Speaker), checkpoint
+[CAM++ Chinese-English Advanced](https://modelscope.cn/models/iic/speech_campplus_sv_zh_en_16k-common_advanced) và
 [Gipformer](https://huggingface.co/g-group-ai-lab/gipformer-65M-rnnt).
 
 Nếu đã có model và chỉ muốn cài dependency:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/setup.ps1 -SkipModels
-python scripts/download_models.py --only eres2net
+python scripts/download_models.py --only campplus
 ```
 
 ## Chạy giao diện
@@ -81,6 +84,9 @@ Gipformer, sau đó đặt tên tạm `Speaker 1`, `Speaker 2`... theo cluster.
 
 Sample chỉ dùng cho lần hiện tại không ghi vào database. Tab **Kho mẫu giọng**
 cho phép lưu embedding để dùng lại ở những lần sau.
+Branch CAM++ dùng riêng `data/database/voice_db_campplus.json`. Embedding ERes2Net
+cũ không tương thích, vì vậy cần enroll lại từ các file sample giọng gốc; database
+ERes2Net cũ vẫn được giữ nguyên.
 
 ## CLI
 
@@ -94,7 +100,7 @@ python app.py run `
   --sample "B=.\samples\b.wav" `
   --cluster-map "1=0" `
   --force-speaker "2=Hưng" `
-  --threshold 0.40
+  --threshold 0.33
 ```
 
 Lưu mẫu vào database:
@@ -108,7 +114,7 @@ python app.py enroll `
 python app.py profiles
 ```
 
-Smoke test chỉ diarization, không tải ERes2Net/Gipformer:
+Smoke test chỉ diarization, không tải CAM++/Gipformer:
 
 ```powershell
 python app.py run --audio .\meeting.wav --skip-identify --skip-asr
@@ -154,18 +160,18 @@ hiện, không phải danh sách người chắc chắn có mặt trong audio.
 - `k < n`: profile không xuất hiện được liệt kê ở `profiles_not_observed`. Nếu
   cùng một cluster có đủ bằng chứng của nhiều người, cluster được đánh dấu
   `mixed_cluster`; app giữ identity từng segment thay vì ép cả cluster theo vote.
-  Các đoạn diarization dài cũng được chia thành cửa sổ identity/ASR tối đa 8 giây
+  Các đoạn diarization dài cũng được chia thành cửa sổ identity tối đa 8 giây
   để giảm nguy cơ embedding trung bình che mất một lần đổi người nói.
 - Không có sample: kết quả mang trạng thái `diarization_only` và tên tạm
   `Speaker 1...k`. Hard override như `2=Hưng` vẫn hoạt động.
-- Có sample nhưng cosine dưới `0.40`: nhãn cuối là `Unknown`, kèm
+- Có sample nhưng cosine dưới `0.33`: nhãn cuối là `Unknown`, kèm
   `provisional_speaker` và bảng `scores` để kiểm tra.
 - Sample thiếu, dưới 1 giây, im lặng, embedding hỏng hoặc sai dimension: sample
   đó bị bỏ qua; profile khác vẫn chạy và warning được ghi vào JSON.
 - Audio im lặng hoặc dưới 0,25 giây: không gọi DiariZen, trả timeline rỗng cùng
   warning thay vì hallucinate cluster.
 - ASR lỗi ở một segment: segment đó có `asr_status=error`; các segment khác vẫn
-  được xuất. Nếu Gipformer hoặc ERes2Net không khởi tạo được, mặc định app xuất
+  được xuất. Nếu Gipformer hoặc CAM++ không khởi tạo được, mặc định app xuất
   partial result. Dùng `--strict` nếu muốn dừng toàn bộ job.
 - Mapping/override trỏ tới cluster không tồn tại hoặc mapping hai chiều: không
   làm job crash; output có warning cấu hình.
@@ -179,7 +185,7 @@ trộn, profile chưa quan sát và identity bị tách qua nhiều cluster.
 - `core/pipeline.py`: điều phối đầy đủ 8 bước và ghi output.
 - `core/diarization.py`: adapter DiariZen.
 - `core/segment_processing.py`: remap, merge, loại overlap, vote và override.
-- `core/voice_id.py`: ERes2Net, enrollment, cosine verification.
+- `core/voice_id.py`: CAM++, enrollment, cosine verification.
 - `core/asr_engine.py`: Gipformer qua sherpa-onnx.
 - `ui/main_layout.py`: giao diện Flet.
 - `config/settings.py`: model ID, threshold và đường dẫn.
@@ -191,6 +197,7 @@ python -m pip install -r requirements-dev.txt
 python -m pytest -q -p no:cacheprovider tests
 ```
 
-Ngưỡng `0.40` là giá trị mặc định hiện tại, không phải ngưỡng tối
+Ngưỡng `0.33` là giá trị mặc định do checkpoint CAM++ Chinese-English công bố,
+không phải ngưỡng tối
 ưu cho mọi micro/phòng họp. Nên hiệu chỉnh trên tập validation thực tế trước khi
 dùng cho quyết định nhạy cảm.

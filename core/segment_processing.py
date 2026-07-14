@@ -117,7 +117,7 @@ def project_identities_to_segments(
 ) -> list[SegmentIdentity]:
     """Project detailed Voice ID evidence onto context-rich ASR segments.
 
-    ERes2Net benefits from bounded windows, while Gipformer performs better when
+    CAM++ benefits from bounded windows, while Gipformer performs better when
     it receives the original merged diarization turn. This function keeps both
     timelines independent and transfers the duration-dominant identity label to
     each ASR turn.

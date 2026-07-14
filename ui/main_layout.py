@@ -9,7 +9,7 @@ from config.settings import SETTINGS, VOICE_DB_PATH, ensure_runtime_dirs
 from core.audio_enhancer import probe_duration
 from core.pipeline import PipelineOptions, run_pipeline
 from core.voice_id import (
-    ERes2NetEmbedder,
+    CAMPPlusEmbedder,
     EnrollmentRequest,
     enroll_speaker,
     load_voice_db,
@@ -407,7 +407,7 @@ def run_flet_app() -> None:
 
         def enroll_worker() -> None:
             try:
-                embedder = ERes2NetEmbedder()
+                embedder = CAMPPlusEmbedder()
                 identifier = db_id.value.strip() or safe_speaker_id(db_name.value)
                 enroll_speaker(
                     identifier,
@@ -435,7 +435,7 @@ def run_flet_app() -> None:
                 page.update()
                 return
             enroll_button.disabled = True
-            db_status.value = "Đang trích xuất embedding ERes2Net..."
+            db_status.value = "Đang trích xuất embedding CAM++..."
             db_status.color = ft.Colors.INDIGO_700
             page.update()
             page.run_thread(enroll_worker)
@@ -543,7 +543,7 @@ def run_flet_app() -> None:
 
         database_controls = ft.Column(
             [
-                ft.Text("Kho mẫu giọng ERes2Net", size=22, weight=ft.FontWeight.BOLD),
+                ft.Text("Kho mẫu giọng CAM++", size=22, weight=ft.FontWeight.BOLD),
                 ft.Text(
                     "Mẫu lưu ở đây sẽ tự động được dùng ở các lần phân tích tiếp theo.",
                     color=ft.Colors.GREY_600,
@@ -577,7 +577,7 @@ def run_flet_app() -> None:
                 [
                     ft.Text("Voice Identity Studio", size=28, weight=ft.FontWeight.BOLD),
                     ft.Text(
-                        "DiariZen diarization • ERes2Net verification • Gipformer tiếng Việt",
+                        "DiariZen diarization • CAM++ verification • Gipformer tiếng Việt",
                         color=ft.Colors.GREY_600,
                     ),
                     ft.Tabs(

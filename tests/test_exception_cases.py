@@ -14,6 +14,9 @@ from core.voice_id import (
     aggregate_cluster_segment_scores,
     assign_cluster_profiles,
     build_runtime_profiles,
+    load_voice_db,
+    load_voice_profiles,
+    verify_segments,
 )
 
 
@@ -168,7 +171,7 @@ def test_invalid_runtime_sample_is_reported_not_fatal(tmp_path, monkeypatch) -> 
     )
 
     class FakeEmbedder:
-        model_id = "iic/speech_eres2net_sv_zh-cn_16k-common"
+        model_id = "iic/speech_campplus_sv_zh_en_16k-common_advanced"
         sample_rate = 16000
 
         def embed_file(self, path):
@@ -186,6 +189,67 @@ def test_invalid_runtime_sample_is_reported_not_fatal(tmp_path, monkeypatch) -> 
         "invalid_enrollment_sample",
         "profile_rejected",
     }
+
+
+def test_campplus_voice_db_rejects_eres2net_embeddings(tmp_path) -> None:
+    missing = load_voice_db(tmp_path / "missing.json")
+    assert missing["model_id"] == (
+        "iic/speech_campplus_sv_zh_en_16k-common_advanced"
+    )
+
+    old_database = tmp_path / "voice_db_eres2net.json"
+    old_database.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "model_id": "iic/speech_eres2net_sv_zh-cn_16k-common",
+                "sample_rate": 16000,
+                "speakers": [
+                    {
+                        "speaker_id": "old",
+                        "display_name": "Old profile",
+                        "embedding": [0.0] * 192,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="enroll lại mẫu bằng CAM\\+\\+"):
+        load_voice_profiles(old_database)
+
+
+def test_voice_verification_uses_campplus_batch_api(tmp_path) -> None:
+    audio = tmp_path / "meeting.wav"
+    sf.write(audio, np.ones(16000 * 2, dtype=np.float32) * 0.1, 16000)
+    calls = []
+
+    class FakeCAMPlus:
+        device = "cpu"
+
+        def embed_waveforms(self, waveforms, sample_rate, batch_size):
+            calls.append((len(waveforms), sample_rate, batch_size))
+            return [np.array([1.0, 0.0], dtype=np.float32) for _ in waveforms]
+
+        def embed_waveform(self, *args, **kwargs):
+            pytest.fail("segment fallback should not run for a successful batch")
+
+    identities = verify_segments(
+        audio,
+        [
+            DiarizationSegment("0", 0.0, 1.0, 1.0),
+            DiarizationSegment("0", 1.0, 2.0, 1.0),
+        ],
+        [VoiceProfile("an", "An", np.array([1.0, 0.0], dtype=np.float32))],
+        FakeCAMPlus(),
+        threshold=0.33,
+        batch_size=16,
+        log=lambda *_: None,
+    )
+
+    assert calls == [(2, 16000, 16)]
+    assert [item.speaker for item in identities] == ["An", "An"]
 
 
 def test_silent_audio_skips_diarization_and_returns_empty_result(tmp_path, monkeypatch) -> None:
@@ -271,7 +335,7 @@ def test_identity_model_failure_falls_back_to_diarization_only(
         lambda *a, **k: [DiarizationSegment("0", 0, 2, 2)],
     )
     monkeypatch.setattr(
-        "core.pipeline.ERes2NetEmbedder",
+        "core.pipeline.CAMPPlusEmbedder",
         lambda *a, **k: (_ for _ in ()).throw(RuntimeError("model unavailable")),
     )
 

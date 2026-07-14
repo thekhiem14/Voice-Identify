@@ -31,7 +31,7 @@ from core.segment_processing import (
     speaker_stats,
 )
 from core.voice_id import (
-    ERes2NetEmbedder,
+    CAMPPlusEmbedder,
     EnrollmentRequest,
     aggregate_cluster_segment_scores,
     assign_cluster_profiles,
@@ -62,6 +62,7 @@ class PipelineOptions:
     merge_max_duration_sec: float = SETTINGS.merge_max_duration_sec
     cluster_enrollment_target_sec: float = SETTINGS.cluster_enrollment_target_sec
     identity_max_window_sec: float = SETTINGS.identity_max_window_sec
+    voice_id_batch_size: int = SETTINGS.voice_id_batch_size
     asr_min_duration_sec: float = SETTINGS.asr_min_duration_sec
     asr_padding_sec: float = SETTINGS.asr_padding_sec
     asr_provider: str = SETTINGS.asr_provider
@@ -75,7 +76,7 @@ class PipelineOptions:
     device: Optional[str] = SETTINGS.device
     speakerlab_root: Optional[str] = SETTINGS.speakerlab_root
     diarizen_model_id: str = SETTINGS.diarizen_model_id
-    eres2net_model_id: str = SETTINGS.eres2net_model_id
+    campplus_model_id: str = SETTINGS.campplus_model_id
 
 
 class PipelineExecutionError(RuntimeError):
@@ -255,12 +256,12 @@ def _execute_pipeline(
         bool(enrollments) or has_saved_profiles
     )
 
-    tick = step(4, "enrollment", "Tạo mẫu sạch và embedding ERes2Net")
+    tick = step(4, "enrollment", "Tạo mẫu sạch và embedding CAM++")
     embedder = None
     if needs_embedder:
         try:
-            embedder = ERes2NetEmbedder(
-                model_id=options.eres2net_model_id,
+            embedder = CAMPPlusEmbedder(
+                model_id=options.campplus_model_id,
                 device=options.device,
                 speakerlab_root=options.speakerlab_root,
             )
@@ -298,7 +299,7 @@ def _execute_pipeline(
                 raise
             add_warning(
                 "identity_stage_unavailable",
-                f"Không thể khởi tạo/chuẩn bị ERes2Net: {exc}",
+                f"Không thể khởi tạo/chuẩn bị CAM++: {exc}",
             )
             embedder = None
             profiles = []
@@ -319,6 +320,7 @@ def _execute_pipeline(
             profiles,
             embedder,
             threshold=options.verification_threshold,
+            batch_size=options.voice_id_batch_size,
             log=_runtime_log,
             log_every=SETTINGS.progress_log_every,
         )
@@ -382,7 +384,7 @@ def _execute_pipeline(
     step_times["smoothing"] = time.perf_counter() - tick
 
     # Match the notebook's ASR timeline: Gipformer receives merged diarization
-    # turns instead of the shorter windows needed by ERes2Net.
+    # turns instead of the shorter windows needed by CAM++.
     identity_windows = identities
     identities = project_identities_to_segments(refined_segments, identity_windows)
     for identity_window in identity_windows:
@@ -392,7 +394,7 @@ def _execute_pipeline(
         "(không cắt theo cửa sổ Voice ID)"
     )
 
-    # Drop the ERes2Net model before ASR. If CUDA Gipformer is explicitly
+    # Drop the CAM++ model before ASR. If CUDA Gipformer is explicitly
     # selected, also release PyTorch's cache before ONNX reserves its own arena.
     if not options.skip_asr and identities:
         embedder = None
@@ -463,7 +465,7 @@ def _execute_pipeline(
         "clusters": clusters_payload,
         "profiles": [profile.metadata() for profile in profiles],
         "segments": [item.to_dict() for item in identities],
-        # Preserve segment-level ERes2Net evidence, especially for mixed or
+        # Preserve segment-level CAM++ evidence, especially for mixed or
         # under-clustered speakers, without forcing ASR onto short windows.
         "identity_windows": [item.to_dict() for item in identity_windows],
         "audio_quality": audio_quality,
@@ -723,6 +725,8 @@ def _validate_options(options: PipelineOptions) -> None:
         raise ValueError("ASR provider/batch configuration is invalid.")
     if options.identity_max_window_sec <= 0:
         raise ValueError("identity_max_window_sec must be positive.")
+    if options.voice_id_batch_size <= 0:
+        raise ValueError("voice_id_batch_size must be positive.")
 
 
 def _mapping_warnings(mapping, labels, kind, add_warning) -> None:

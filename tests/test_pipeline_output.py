@@ -11,11 +11,16 @@ from core.pipeline import (
     _build_public_transcript_segments,
     run_pipeline,
 )
-from config.settings import SETTINGS
+from config.settings import SETTINGS, VOICE_DB_PATH
 
 
-def test_default_voice_verification_threshold_is_point_four() -> None:
-    assert SETTINGS.verification_threshold == 0.40
+def test_default_voice_verification_threshold_matches_campplus_checkpoint() -> None:
+    assert SETTINGS.verification_threshold == 0.33
+    assert SETTINGS.campplus_model_id == (
+        "iic/speech_campplus_sv_zh_en_16k-common_advanced"
+    )
+    assert VOICE_DB_PATH.name == "voice_db_campplus.json"
+    assert SETTINGS.voice_id_batch_size == 16
 
 
 def test_notebook_asr_operating_point_is_the_default() -> None:

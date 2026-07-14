@@ -14,15 +14,15 @@ DATABASE_DIR = DATA_DIR / "database"
 MODELS_DIR = ROOT_DIR / "models"
 OUTPUT_DIR = ROOT_DIR / "outputs"
 
-VOICE_DB_PATH = DATABASE_DIR / "voice_db.json"
-ERES2NET_DIR = MODELS_DIR / "eres2net"
+VOICE_DB_PATH = DATABASE_DIR / "voice_db_campplus.json"
+CAMPPLUS_DIR = MODELS_DIR / "cam_plus"
 GIPFORMER_DIR = MODELS_DIR / "gipformer"
 DIARIZEN_DIR = MODELS_DIR / "diarizen"
 
 # The repository is already present in older copies of this project.  Keeping
 # this fallback avoids forcing users to clone a second 3D-Speaker checkout.
 VENDORED_3D_SPEAKER_DIR = MODELS_DIR / "3D-Speaker"
-LEGACY_3D_SPEAKER_DIR = MODELS_DIR / "cam_plus" / "3D-Speaker"
+LEGACY_3D_SPEAKER_DIR = CAMPPLUS_DIR / "3D-Speaker"
 
 
 def load_env_file(env_path: Path = ENV_PATH) -> None:
@@ -68,11 +68,14 @@ class AISettings:
     speakerlab_root: Optional[str] = _default_speakerlab_root()
 
     diarizen_model_id: str = "BUT-FIT/diarizen-wavlm-large-s80-md-v2"
-    eres2net_model_id: str = "iic/speech_eres2net_sv_zh-cn_16k-common"
+    # Bilingual CAM++ keeps the fast 6.85M-parameter architecture while being
+    # less Mandarin-specific for Vietnamese meetings containing English terms.
+    campplus_model_id: str = "iic/speech_campplus_sv_zh_en_16k-common_advanced"
     gipformer_repo_id: str = "g-group-ai-lab/gipformer-65M-rnnt"
 
     # User-selected operating point. Scores below this remain an anonymous S-label.
-    verification_threshold: float = 0.40
+    # Default published with the selected CAM++ Chinese-English checkpoint.
+    verification_threshold: float = 0.33
     verification_ambiguity_warning_margin: float = 0.03
     verification_min_segment_sec: float = 0.50
     cluster_enrollment_target_sec: float = 10.0
@@ -101,6 +104,11 @@ class AISettings:
     mixed_cluster_secondary_duration_sec: float = 1.5
     cluster_vote_min_evidence_coverage: float = 0.35
     identity_max_window_sec: float = 8.0
+    # CAM++ can safely batch windows with exactly equal feature lengths. This
+    # avoids padding-induced embedding drift while improving GPU utilization.
+    voice_id_batch_size: int = max(
+        1, int(os.environ.get("VOICE_ID_BATCH_SIZE", "16"))
+    )
 
     enhancement_blend_alpha: float = 0.7
     enhancement_prop_decrease: float = 0.75
@@ -115,7 +123,7 @@ def ensure_runtime_dirs() -> None:
         CACHE_DIR,
         DATABASE_DIR,
         MODELS_DIR,
-        ERES2NET_DIR,
+        CAMPPLUS_DIR,
         GIPFORMER_DIR,
         DIARIZEN_DIR,
         OUTPUT_DIR,
@@ -126,7 +134,7 @@ def ensure_runtime_dirs() -> None:
         VOICE_DB_PATH.write_text(
             '{\n'
             '  "version": 1,\n'
-            f'  "model_id": "{SETTINGS.eres2net_model_id}",\n'
+            f'  "model_id": "{SETTINGS.campplus_model_id}",\n'
             f'  "sample_rate": {SETTINGS.sample_rate},\n'
             '  "speakers": []\n'
             '}\n',

@@ -8,7 +8,7 @@ from pathlib import Path
 from config.settings import OUTPUT_DIR, SETTINGS, VOICE_DB_PATH, ensure_runtime_dirs
 from core.pipeline import PipelineOptions, run_pipeline
 from core.voice_id import (
-    ERes2NetEmbedder,
+    CAMPPlusEmbedder,
     EnrollmentRequest,
     enroll_speaker,
     load_voice_db,
@@ -56,7 +56,7 @@ def main() -> None:
         return
 
     if args.command == "enroll":
-        embedder = ERes2NetEmbedder(
+        embedder = CAMPPlusEmbedder(
             device=args.device,
             speakerlab_root=args.speakerlab_root,
         )
@@ -89,7 +89,7 @@ def main() -> None:
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Nhận diện người nói tiếng Việt: DiariZen + ERes2Net + Gipformer"
+        description="Nhận diện người nói tiếng Việt: DiariZen + CAM++ + Gipformer"
     )
     subparsers = parser.add_subparsers(dest="command")
 
@@ -126,7 +126,7 @@ def _build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument(
         "--strict",
         action="store_true",
-        help="Dừng toàn bộ job nếu ERes2Net hoặc Gipformer lỗi thay vì xuất partial result",
+        help="Dừng toàn bộ job nếu CAM++ hoặc Gipformer lỗi thay vì xuất partial result",
     )
     run_parser.add_argument("--hf-token", default=SETTINGS.hf_token)
     run_parser.add_argument("--device", default=SETTINGS.device)

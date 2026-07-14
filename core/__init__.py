@@ -10,12 +10,12 @@ from core.segment_processing import (
     smooth_identities,
     split_long_segments,
 )
-from core.voice_id import ERes2NetEmbedder, EnrollmentRequest, enroll_speaker
+from core.voice_id import CAMPPlusEmbedder, EnrollmentRequest, enroll_speaker
 
 __all__ = [
     "ClusterIdentity",
     "DiarizationSegment",
-    "ERes2NetEmbedder",
+    "CAMPPlusEmbedder",
     "EnrollmentRequest",
     "GipformerASR",
     "PipelineOptions",

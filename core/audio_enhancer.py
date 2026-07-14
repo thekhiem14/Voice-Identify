@@ -106,7 +106,7 @@ def write_concatenated_slices(
     output_path: str | Path,
     silence_seconds: float = 0.08,
 ) -> tuple[Path, float]:
-    """Concatenate selected clean portions into one ERes2Net enrollment WAV."""
+    """Concatenate selected clean portions into one speaker enrollment WAV."""
     y, sample_rate = load_mono_audio(audio_path)
     chunks: list[np.ndarray] = []
     used_seconds = 0.0

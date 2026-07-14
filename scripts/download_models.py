@@ -8,13 +8,13 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT_DIR))
 
 from config.settings import (  # noqa: E402
+    CAMPPLUS_DIR,
     DIARIZEN_DIR,
-    ERES2NET_DIR,
     GIPFORMER_DIR,
     SETTINGS,
     ensure_runtime_dirs,
 )
-from core.voice_id import ensure_eres2net_weights  # noqa: E402
+from core.voice_id import ensure_campplus_weights  # noqa: E402
 
 
 GIPFORMER_FILES = (
@@ -32,8 +32,8 @@ def main() -> None:
     parser.add_argument(
         "--only",
         nargs="+",
-        choices=["gipformer", "diarizen", "eres2net"],
-        default=["gipformer", "diarizen", "eres2net"],
+        choices=["gipformer", "diarizen", "campplus"],
+        default=["gipformer", "diarizen", "campplus"],
     )
     parser.add_argument("--hf-token", default=SETTINGS.hf_token)
     args = parser.parse_args()
@@ -42,8 +42,8 @@ def main() -> None:
         download_gipformer()
     if "diarizen" in args.only:
         download_diarizen(args.hf_token)
-    if "eres2net" in args.only:
-        download_eres2net()
+    if "campplus" in args.only:
+        download_campplus()
 
 
 def download_gipformer() -> None:
@@ -79,9 +79,9 @@ def download_diarizen(hf_token: str | None) -> None:
     print(f"  ok {target}")
 
 
-def download_eres2net() -> None:
-    print("Downloading ERes2Net...")
-    path = ensure_eres2net_weights(SETTINGS.eres2net_model_id, ERES2NET_DIR)
+def download_campplus() -> None:
+    print("Downloading CAM++...")
+    path = ensure_campplus_weights(SETTINGS.campplus_model_id, CAMPPLUS_DIR)
     print(f"  ok {path}")
 
 
