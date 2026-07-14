@@ -1,0 +1,28 @@
+# Local secrets and machine-specific configuration
+.env
+
+# Generated jobs and temporary audio
+outputs/
+data/cache/
+
+# Local voice database and enrollment recordings (personal/biometric data)
+data/database/voice_db.json
+data/database/samples/
+
+# Downloaded checkpoints and vendored model repositories
+models/
+
+# Python, tests and editors
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+.vscode/
+.idea/
+
+# Operating systems
+.DS_Store
+Thumbs.db
