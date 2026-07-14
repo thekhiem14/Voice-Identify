@@ -18,6 +18,17 @@ def test_default_voice_verification_threshold_is_point_four() -> None:
     assert SETTINGS.verification_threshold == 0.40
 
 
+def test_notebook_asr_operating_point_is_the_default() -> None:
+    assert SETTINGS.merge_max_gap_sec == 2.0
+    assert SETTINGS.merge_max_duration_sec == 20.0
+    assert SETTINGS.asr_min_duration_sec == 1.5
+    assert SETTINGS.asr_provider == "cpu"
+    assert SETTINGS.asr_batch_size == 1
+    options = PipelineOptions()
+    assert options.asr_provider == "cpu"
+    assert options.asr_batch_size == 1
+
+
 def test_public_transcript_has_minimal_shape_and_merges_same_speaker() -> None:
     rows = [
         SegmentIdentity(
@@ -94,3 +105,69 @@ def test_pipeline_writes_final_json_without_heavy_models(tmp_path, monkeypatch) 
     assert payload["segments"][0]["asr_status"] == "disabled"
     transcript = json.loads(paths["transcript"].read_text(encoding="utf-8"))
     assert transcript == {"segments": []}
+
+
+def test_pipeline_keeps_voice_id_windows_separate_from_asr_segments(
+    tmp_path, monkeypatch
+) -> None:
+    audio = tmp_path / "meeting.wav"
+    enhanced_audio = tmp_path / "meeting_enhanced.wav"
+    t = np.arange(16_000 * 12, dtype=np.float32) / 16_000
+    sf.write(audio, 0.1 * np.sin(2 * np.pi * 220 * t), 16_000)
+    sf.write(enhanced_audio, 0.08 * np.sin(2 * np.pi * 220 * t), 16_000)
+    asr_calls: list[list[float]] = []
+    asr_audio_calls = []
+
+    monkeypatch.setattr(
+        "core.pipeline.convert_to_16k_mono",
+        lambda *args, **kwargs: audio,
+    )
+    monkeypatch.setattr(
+        "core.pipeline.run_diarization",
+        lambda *args, **kwargs: [
+            DiarizationSegment("0", 0, 6, 6),
+            DiarizationSegment("0", 6.2, 12, 5.8),
+        ],
+    )
+    monkeypatch.setattr(
+        "core.pipeline.enhance_audio",
+        lambda *args, **kwargs: (enhanced_audio, {"enabled": True}),
+    )
+
+    class FakeASR:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def transcribe_segments(self, _audio, segments, **kwargs):
+            asr_audio_calls.append(_audio)
+            asr_calls.append([item.duration for item in segments])
+            for item in segments:
+                item.text = "MỘT CÂU ĐỦ NGỮ CẢNH"
+                item.asr_status = "transcribed"
+            return segments, 0
+
+    monkeypatch.setattr("core.pipeline.GipformerASR", FakeASR)
+
+    paths = run_pipeline(
+        audio,
+        PipelineOptions(
+            output_dir=str(tmp_path / "outputs"),
+            job_name="separate-timelines",
+            skip_identify=True,
+            enhance_audio=True,
+        ),
+    )
+    payload = json.loads(paths["result"].read_text(encoding="utf-8"))
+
+    assert asr_calls == [[12.0]]
+    assert asr_audio_calls == [audio]
+    assert len(payload["segments"]) == 1
+    assert len(payload["identity_windows"]) == 2
+    assert payload["segments"][0]["text"] == "MỘT CÂU ĐỦ NGỮ CẢNH"
+    assert {
+        item["asr_status"] for item in payload["identity_windows"]
+    } == {"not_applicable_identity_window"}
+    assert payload["metrics"]["identity_segments"] == 2
+    assert payload["metrics"]["asr_segments"] == 1
+    assert payload["metrics"]["options"]["asr_provider"] == "cpu"
+    assert payload["metrics"]["options"]["asr_batch_size"] == 1

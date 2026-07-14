@@ -5,6 +5,7 @@ import numpy as np
 from core.models import DiarizationSegment, SegmentIdentity, VoiceProfile
 from core.segment_processing import (
     merge_segments,
+    project_identities_to_segments,
     remap_clusters,
     select_clean_slices,
     split_long_segments,
@@ -26,12 +27,12 @@ def test_numeric_cluster_mapping_and_merge() -> None:
     assert (merged[0].start, merged[0].end) == (0.0, 4.0)
 
 
-def test_merge_requires_gap_strictly_below_two_seconds() -> None:
+def test_merge_includes_gap_equal_to_two_seconds_like_notebook() -> None:
     result = merge_segments(
         [segment("SPEAKER_00", 0, 1), segment("SPEAKER_00", 3, 4)],
         max_gap=2.0,
     )
-    assert len(result) == 2
+    assert len(result) == 1
 
 
 def test_clean_enrollment_slices_remove_overlap() -> None:
@@ -50,6 +51,36 @@ def test_long_under_cluster_segment_is_split_for_identity() -> None:
     assert windows[0].start == 0
     assert windows[-1].end == 21
     assert all(item.cluster == "A" for item in windows)
+
+
+def test_identity_windows_are_projected_back_to_one_context_rich_asr_segment() -> None:
+    diarization = [segment("A", 0, 18)]
+    identities = [
+        SegmentIdentity(
+            "id0", "A", 0, 6, 6, speaker_id="an", speaker="An",
+            score=0.7, status="matched",
+        ),
+        SegmentIdentity(
+            "id1", "A", 6, 12, 6, speaker_id="an", speaker="An",
+            score=0.8, status="matched",
+        ),
+        SegmentIdentity(
+            "id2", "A", 12, 18, 6, speaker="Unknown",
+            status="below_threshold",
+        ),
+    ]
+
+    projected = project_identities_to_segments(diarization, identities)
+
+    assert len(projected) == 1
+    assert (projected[0].start, projected[0].end, projected[0].duration) == (
+        0.0,
+        18.0,
+        18.0,
+    )
+    assert projected[0].speaker_id == "an"
+    assert projected[0].speaker == "An"
+    assert projected[0].asr_status == "pending"
 
 
 def test_majority_vote_and_hard_override() -> None:

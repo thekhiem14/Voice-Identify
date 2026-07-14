@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-import re
 import math
+import re
 from collections import Counter, defaultdict
+from dataclasses import replace
 from typing import Iterable, Optional
 
 from core.models import ClusterIdentity, DiarizationSegment, SegmentIdentity, TimeSlice, VoiceProfile
@@ -61,7 +62,7 @@ def merge_segments(
     max_gap: float = 2.0,
     max_merged_duration: float = 30.0,
 ) -> list[DiarizationSegment]:
-    """Merge consecutive same-cluster turns separated by less than max_gap."""
+    """Merge consecutive same-cluster turns separated by at most max_gap."""
     ordered = sorted(segments, key=lambda item: (item.start, item.end))
     if not ordered:
         return []
@@ -72,7 +73,7 @@ def merge_segments(
         combined_duration = max(previous.end, item.end) - previous.start
         if (
             item.cluster == previous.cluster
-            and gap < max_gap
+            and gap <= max_gap
             and combined_duration <= max_merged_duration
         ):
             previous.end = round(max(previous.end, item.end), 3)
@@ -85,7 +86,7 @@ def merge_segments(
 def split_long_segments(
     segments: Iterable[DiarizationSegment], max_duration: float = 8.0
 ) -> list[DiarizationSegment]:
-    """Create bounded identity/ASR windows without changing diarization clusters."""
+    """Create bounded Voice ID windows without changing diarization clusters."""
     if max_duration <= 0:
         raise ValueError("max_duration must be positive.")
     output: list[DiarizationSegment] = []
@@ -108,6 +109,89 @@ def split_long_segments(
                 )
             )
     return output
+
+
+def project_identities_to_segments(
+    segments: Iterable[DiarizationSegment],
+    identity_windows: Iterable[SegmentIdentity],
+) -> list[SegmentIdentity]:
+    """Project detailed Voice ID evidence onto context-rich ASR segments.
+
+    ERes2Net benefits from bounded windows, while Gipformer performs better when
+    it receives the original merged diarization turn. This function keeps both
+    timelines independent and transfers the duration-dominant identity label to
+    each ASR turn.
+    """
+    windows_by_cluster: dict[str, list[SegmentIdentity]] = defaultdict(list)
+    for identity in identity_windows:
+        windows_by_cluster[identity.cluster].append(identity)
+
+    output: list[SegmentIdentity] = []
+    for index, segment in enumerate(segments):
+        candidates: list[tuple[SegmentIdentity, float]] = []
+        for identity in windows_by_cluster.get(segment.cluster, []):
+            overlap = min(segment.end, identity.end) - max(segment.start, identity.start)
+            if overlap > 0:
+                candidates.append((identity, overlap))
+
+        if not candidates:
+            output.append(
+                SegmentIdentity(
+                    segment_id=f"seg_{index:04d}",
+                    cluster=segment.cluster,
+                    start=segment.start,
+                    end=segment.end,
+                    duration=segment.duration,
+                    status="identity_unmapped",
+                    raw_status="identity_unmapped",
+                )
+            )
+            continue
+
+        duration_by_label: dict[tuple[str, str], float] = defaultdict(float)
+        for identity, overlap in candidates:
+            duration_by_label[_identity_label_key(identity)] += overlap
+        winning_label = max(
+            duration_by_label,
+            key=lambda label: (
+                duration_by_label[label],
+                label[0] != "unknown",
+                label,
+            ),
+        )
+        representative, _ = max(
+            (
+                (identity, overlap)
+                for identity, overlap in candidates
+                if _identity_label_key(identity) == winning_label
+            ),
+            key=lambda item: (
+                item[1],
+                item[0].status == "matched",
+                item[0].score if item[0].score is not None else -1.0,
+            ),
+        )
+        output.append(
+            replace(
+                representative,
+                segment_id=f"seg_{index:04d}",
+                start=segment.start,
+                end=segment.end,
+                duration=segment.duration,
+                text="",
+                asr_status="pending",
+                asr_error=None,
+            )
+        )
+    return output
+
+
+def _identity_label_key(identity: SegmentIdentity) -> tuple[str, str]:
+    if identity.speaker_id:
+        return "speaker_id", identity.speaker_id
+    if identity.speaker and identity.speaker != "Unknown":
+        return "speaker", identity.speaker
+    return "unknown", ""
 
 
 def select_clean_slices(

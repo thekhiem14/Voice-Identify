@@ -23,6 +23,7 @@ from core.segment_processing import (
     cluster_key,
     cluster_sort_key,
     merge_segments,
+    project_identities_to_segments,
     reconcile_speaker_counts,
     remap_clusters,
     split_long_segments,
@@ -63,6 +64,8 @@ class PipelineOptions:
     identity_max_window_sec: float = SETTINGS.identity_max_window_sec
     asr_min_duration_sec: float = SETTINGS.asr_min_duration_sec
     asr_padding_sec: float = SETTINGS.asr_padding_sec
+    asr_provider: str = SETTINGS.asr_provider
+    asr_batch_size: int = SETTINGS.asr_batch_size
     include_saved_profiles: bool = True
     enhance_audio: bool = False
     skip_identify: bool = False
@@ -228,12 +231,12 @@ def _execute_pipeline(
         max_gap=options.merge_max_gap_sec,
         max_merged_duration=options.merge_max_duration_sec,
     )
-    analysis_segments = split_long_segments(
+    identity_segments = split_long_segments(
         refined_segments, max_duration=options.identity_max_window_sec
     )
     _runtime_log(
         f"[Pipeline] Sau tinh lọc: {len(refined_segments)} segment; "
-        f"{len(analysis_segments)} cửa sổ dùng cho Voice ID/ASR"
+        f"{len(identity_segments)} cửa sổ dùng riêng cho Voice ID"
     )
     refined_labels = {item.cluster for item in refined_segments}
     _mapping_warnings(options.hard_overrides, refined_labels, "hard_override", add_warning)
@@ -312,7 +315,7 @@ def _execute_pipeline(
     if embedder and profiles:
         identities = verify_segments(
             active_audio,
-            analysis_segments,
+            identity_segments,
             profiles,
             embedder,
             threshold=options.verification_threshold,
@@ -358,7 +361,7 @@ def _execute_pipeline(
             )
     else:
         identities = _unknown_identities(
-            analysis_segments,
+            identity_segments,
             "disabled" if options.skip_identify else "no_profiles",
         )
     step_times["verification"] = time.perf_counter() - tick
@@ -378,6 +381,24 @@ def _execute_pipeline(
     _reconciliation_warnings(reconciliation, add_warning)
     step_times["smoothing"] = time.perf_counter() - tick
 
+    # Match the notebook's ASR timeline: Gipformer receives merged diarization
+    # turns instead of the shorter windows needed by ERes2Net.
+    identity_windows = identities
+    identities = project_identities_to_segments(refined_segments, identity_windows)
+    for identity_window in identity_windows:
+        identity_window.asr_status = "not_applicable_identity_window"
+    _runtime_log(
+        f"[Pipeline] ASR dùng {len(identities)} segment đã merge "
+        "(không cắt theo cửa sổ Voice ID)"
+    )
+
+    # Drop the ERes2Net model before ASR. If CUDA Gipformer is explicitly
+    # selected, also release PyTorch's cache before ONNX reserves its own arena.
+    if not options.skip_asr and identities:
+        embedder = None
+        if options.asr_provider.casefold() == "cuda":
+            _release_torch_cuda_memory(options.device, _runtime_log)
+
     # 7. ASR is recoverable: model-level and segment-level failures stay in output.
     tick = step(7, "asr", "Gipformer đang nhận dạng tiếng Việt theo từng segment")
     if options.skip_asr:
@@ -388,16 +409,19 @@ def _execute_pipeline(
     else:
         try:
             asr = GipformerASR(
-                provider=SETTINGS.asr_provider,
+                provider=options.asr_provider,
                 device=options.device,
                 log=_runtime_log,
             )
             identities, asr_skipped = asr.transcribe_segments(
-                active_audio,
+                # Gipformer was trained for difficult/noisy speech. The
+                # notebook showed that denoising can distort Vietnamese tones,
+                # so ASR always uses only the normalized raw recording.
+                normalized_audio,
                 identities,
                 min_duration=options.asr_min_duration_sec,
                 padding=options.asr_padding_sec,
-                batch_size=SETTINGS.asr_batch_size,
+                batch_size=options.asr_batch_size,
                 log_every=SETTINGS.progress_log_every,
             )
         except Exception as exc:
@@ -439,6 +463,9 @@ def _execute_pipeline(
         "clusters": clusters_payload,
         "profiles": [profile.metadata() for profile in profiles],
         "segments": [item.to_dict() for item in identities],
+        # Preserve segment-level ERes2Net evidence, especially for mixed or
+        # under-clustered speakers, without forcing ASR onto short windows.
+        "identity_windows": [item.to_dict() for item in identity_windows],
         "audio_quality": audio_quality,
     }
     transcript_payload = {
@@ -466,16 +493,23 @@ def _execute_pipeline(
         "enhancement": enhancement,
         "raw_segments": len(raw_segments),
         "refined_segments": len(refined_segments),
-        "identity_asr_segments": len(analysis_segments),
+        "identity_segments": len(identity_windows),
+        "asr_segments": len(identities),
+        # Backward-compatible metric name retained for older consumers.
+        "identity_asr_segments": len(identities),
         "clusters": len(refined_labels),
         "speaker_stats": speaker_stats(refined_segments),
         "profiles": len(profiles),
         "reconciliation": reconciliation,
-        "matched_segments": sum(1 for item in identities if item.status == "matched"),
-        "diarization_only_segments": sum(
-            1 for item in identities if item.status == "diarization_only"
+        "matched_segments": sum(
+            1 for item in identity_windows if item.status == "matched"
         ),
-        "unknown_segments": sum(1 for item in identities if item.speaker == "Unknown"),
+        "diarization_only_segments": sum(
+            1 for item in identity_windows if item.status == "diarization_only"
+        ),
+        "unknown_segments": sum(
+            1 for item in identity_windows if item.speaker == "Unknown"
+        ),
         "asr_skipped_segments": asr_skipped,
         "asr_error_segments": len(asr_errors),
         "warning_count": len(warnings),
@@ -500,6 +534,25 @@ def _unknown_identities(segments, status: str) -> list[SegmentIdentity]:
         )
         for index, item in enumerate(segments)
     ]
+
+
+def _release_torch_cuda_memory(
+    device: Optional[str], log: Callable[[str], None] = _runtime_log
+) -> None:
+    if not str(device or "").startswith("cuda"):
+        return
+    try:
+        import gc
+        import torch
+
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            log("[GPU] Đã giải phóng cache PyTorch trước khi chạy Gipformer")
+    except Exception as exc:
+        # Cache cleanup is an optimization. Model initialization will still
+        # report a useful error if CUDA is genuinely unavailable.
+        log(f"[GPU] Không thể giải phóng cache PyTorch: {exc}")
 
 
 def _build_clean_transcript(
@@ -666,6 +719,8 @@ def _validate_options(options: PipelineOptions) -> None:
         raise ValueError("Merge duration/gap configuration is invalid.")
     if options.asr_min_duration_sec < 0 or options.asr_padding_sec < 0:
         raise ValueError("ASR duration/padding configuration is invalid.")
+    if not options.asr_provider.strip() or options.asr_batch_size <= 0:
+        raise ValueError("ASR provider/batch configuration is invalid.")
     if options.identity_max_window_sec <= 0:
         raise ValueError("identity_max_window_sec must be positive.")
 

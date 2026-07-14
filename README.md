@@ -7,13 +7,19 @@ Việt từ một file hội thoại.
 audio + voice samples
   -> mono 16 kHz
   -> DiariZen diarization
-  -> remap cluster + merge gap < 2 s
+  -> remap cluster + merge gap <= 2 s (tối đa 20 s)
   -> clean 10 s cluster enrollment
-  -> ERes2Net cosine verification (threshold 0.40)
+  -> ERes2Net cosine verification trên cửa sổ <= 8 s (threshold 0.40)
   -> majority vote + hard override
-  -> Gipformer Vietnamese ASR
+  -> Gipformer Vietnamese ASR trên segment merge, bỏ segment < 1.5 s
   -> result.json
 ```
+
+Trong `result.json`, `segments` là timeline đã merge dùng cho ASR; `identity_windows`
+giữ bằng chứng ERes2Net chi tiết theo cửa sổ để không làm mất thông tin voice identify.
+Gipformer luôn đọc bản mono 16 kHz chưa khử nhiễu, kể cả khi bật enhancement, vì
+denoise có thể làm méo thanh điệu tiếng Việt; phần preprocess/enhancement vẫn được
+giữ cho các tầng diarization và voice identify.
 
 ## Cài đặt
 
@@ -36,7 +42,10 @@ powershell -ExecutionPolicy Bypass -File scripts/install_gpu.ps1
 
 Script cài `torch`/`torchaudio` CUDA 12.8, dependency khử nhiễu và kiểm tra
 `torch.cuda.is_available()` trước khi báo thành công. Cấu hình mặc định dùng `cuda:0`,
-DiariZen batch size 2 cho GPU 6 GB và Gipformer yêu cầu provider `cuda`.
+DiariZen và ERes2Net dùng GPU; Gipformer mặc định dùng `provider=cpu` và decode
+tuần tự (`ASR_BATCH_SIZE=1`) giống notebook. Cấu hình này tránh tranh chấp VRAM,
+tránh attention encoder tạo allocation hơn 1 GB và trên máy thử nghiệm còn nhanh
+hơn CUDA tuần tự. Có thể bật `ASR_PROVIDER=cuda`, nhưng nên giữ batch size 1.
 
 Console in tiến độ DiariZen, ERes2Net và Gipformer mỗi 100 chunk/segment. Có thể
 đổi tần suất bằng `PROGRESS_LOG_EVERY` trong `.env`.

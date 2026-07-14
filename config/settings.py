@@ -60,7 +60,10 @@ class AISettings:
     # This application is model-heavy and targets NVIDIA GPUs by default.
     # Set DEVICE=cpu explicitly only when a CPU-only run is intentional.
     device: Optional[str] = os.environ.get("DEVICE") or "cuda:0"
-    asr_provider: str = os.environ.get("ASR_PROVIDER") or "cuda"
+    # The notebook uses sherpa-onnx's default CPU provider. It is faster for
+    # sequential Gipformer streams on this machine, reproduces the reference
+    # transcript more closely, and does not compete with PyTorch for VRAM.
+    asr_provider: str = os.environ.get("ASR_PROVIDER") or "cpu"
     hf_token: Optional[str] = os.environ.get("HF_TOKEN") or None
     speakerlab_root: Optional[str] = _default_speakerlab_root()
 
@@ -76,11 +79,16 @@ class AISettings:
     cluster_enrollment_min_clean_sec: float = 0.50
 
     merge_max_gap_sec: float = 2.0
-    merge_max_duration_sec: float = 30.0
-    asr_min_duration_sec: float = 1.0
+    # Match the operating point that produced the stronger notebook transcript:
+    # keep enough context for Gipformer, but cap each utterance at 20 seconds.
+    merge_max_duration_sec: float = 20.0
+    asr_min_duration_sec: float = 1.5
     asr_padding_sec: float = 0.5
     asr_num_threads: int = max(1, min(8, (os.cpu_count() or 4) // 2))
-    asr_batch_size: int = max(1, int(os.environ.get("ASR_BATCH_SIZE", "32")))
+    # The reference notebook decodes one stream at a time. With 20-second
+    # segments, batching 32 encoder attention graphs can request >1 GB in one
+    # ONNX allocation and exhaust a 6 GB GPU.
+    asr_batch_size: int = max(1, int(os.environ.get("ASR_BATCH_SIZE", "1")))
     progress_log_every: int = max(1, int(os.environ.get("PROGRESS_LOG_EVERY", "100")))
     # WavLM Large with 16-second windows does not fit batch_size=32 in 6 GB VRAM.
     diarization_gpu_batch_size: int = max(

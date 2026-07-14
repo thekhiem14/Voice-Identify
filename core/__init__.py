@@ -4,6 +4,7 @@ from core.models import ClusterIdentity, DiarizationSegment, SegmentIdentity, Vo
 from core.pipeline import PipelineExecutionError, PipelineOptions, run_pipeline
 from core.segment_processing import (
     merge_segments,
+    project_identities_to_segments,
     reconcile_speaker_counts,
     remap_clusters,
     smooth_identities,
@@ -23,6 +24,7 @@ __all__ = [
     "VoiceProfile",
     "enroll_speaker",
     "merge_segments",
+    "project_identities_to_segments",
     "remap_clusters",
     "reconcile_speaker_counts",
     "run_diarization",
