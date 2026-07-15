@@ -33,6 +33,26 @@ Copy-Item .env.example .env
 powershell -ExecutionPolicy Bypass -File scripts/setup.ps1
 ```
 
+### Bản test tải runtime sau khi cài
+
+Có thể gửi source app (không kèm `models/` và `.runtime/`) cho người test. Máy
+test chạy lệnh dưới đây để tạo Python runtime riêng, cài dependency và tải
+checkpoint vào máy lần đầu:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/bootstrap_test.ps1
+```
+
+Máy có NVIDIA dùng thêm `-Gpu`. Sau khi bootstrap xong, chạy app bằng:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/run_test.ps1
+```
+
+Runtime được lưu trong `.runtime/`, còn model trong `models/`; các lần sau
+không phải cài/tải lại. Cách này cần máy test có Python và Git, đồng thời có
+Internet ở lần cài đầu tiên.
+
 ### NVIDIA RTX GPU trên Windows
 
 Nếu môi trường cũ đã cài PyTorch CPU, đóng mọi cửa sổ đang chạy `python app.py`, rồi chạy:
