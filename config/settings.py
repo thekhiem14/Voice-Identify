@@ -57,9 +57,9 @@ def _default_speakerlab_root() -> Optional[str]:
 @dataclass(frozen=True)
 class AISettings:
     sample_rate: int = 16_000
-    # This application is model-heavy and targets NVIDIA GPUs by default.
-    # Set DEVICE=cpu explicitly only when a CPU-only run is intentional.
-    device: Optional[str] = os.environ.get("DEVICE") or "cuda:0"
+    # CPU is the portable initial mode. The UI can switch the complete pipeline
+    # to cuda:0 after scripts/install_gpu.ps1 has installed the GPU runtime.
+    device: Optional[str] = os.environ.get("DEVICE") or "cpu"
     # The notebook uses sherpa-onnx's default CPU provider. It is faster for
     # sequential Gipformer streams on this machine, reproduces the reference
     # transcript more closely, and does not compete with PyTorch for VRAM.
@@ -96,6 +96,11 @@ class AISettings:
     # WavLM Large with 16-second windows does not fit batch_size=32 in 6 GB VRAM.
     diarization_gpu_batch_size: int = max(
         1, int(os.environ.get("DIARIZATION_GPU_BATCH_SIZE", "2"))
+    )
+    # WavLM Large is memory-heavy on CPU as well. A small batch avoids large
+    # RAM spikes when the UI is switched away from CUDA.
+    diarization_cpu_batch_size: int = max(
+        1, int(os.environ.get("DIARIZATION_CPU_BATCH_SIZE", "1"))
     )
 
     enrollment_min_duration_sec: float = 1.0

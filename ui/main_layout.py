@@ -21,6 +21,26 @@ from ui.components.transcript_view import build_transcript_view, load_result
 AUDIO_EXTENSIONS = ["wav", "mp3", "m4a", "flac", "ogg", "aac", "mp4"]
 
 
+def runtime_inference_options(use_gpu: bool) -> dict[str, object]:
+    """Return one coherent device preset for every inference stage."""
+    configured = str(SETTINGS.device or "cuda:0")
+    gpu_device = configured if configured.startswith("cuda") else "cuda:0"
+    return {
+        "mode": "gpu" if use_gpu else "cpu",
+        "device": gpu_device if use_gpu else "cpu",
+        "asr_provider": "cuda" if use_gpu else "cpu",
+        # Gipformer's attention allocation is unsafe with larger CUDA batches;
+        # keeping one also mirrors the notebook in CPU mode.
+        "asr_batch_size": 1,
+    }
+
+
+def runtime_inference_label(use_gpu: bool) -> str:
+    if use_gpu:
+        return "GPU: DiariZen, CAM++ và Gipformer đều chạy CUDA"
+    return "CPU: toàn bộ pipeline chạy trên CPU, không sử dụng CUDA"
+
+
 def run_flet_app() -> None:
     try:
         import flet as ft
@@ -77,6 +97,15 @@ def run_flet_app() -> None:
         include_saved = ft.Switch(label="Dùng kho mẫu đã lưu", value=True)
         enhance = ft.Switch(label="Khử nhiễu", value=False)
         skip_asr = ft.Switch(label="Bỏ qua ASR", value=False)
+        use_gpu = ft.Switch(
+            label="Dùng GPU cho toàn pipeline",
+            value=str(SETTINGS.device or "").startswith("cuda"),
+        )
+        runtime_hint = ft.Text(
+            runtime_inference_label(bool(use_gpu.value)),
+            size=12,
+            color=ft.Colors.BLUE_700,
+        )
         progress_bar = ft.ProgressBar(value=0, visible=False)
         status = ft.Text("Sẵn sàng", color=ft.Colors.GREY_700)
         run_button = ft.FilledButton("Chạy pipeline", icon=ft.Icons.PLAY_ARROW)
@@ -222,6 +251,7 @@ def run_flet_app() -> None:
 
         def set_busy(busy: bool) -> None:
             run_button.disabled = busy
+            use_gpu.disabled = busy
             progress_bar.visible = busy
             if not busy:
                 progress_bar.value = 1
@@ -231,7 +261,12 @@ def run_flet_app() -> None:
             progress_bar.value = max(0, min(1, (number - 1) / total))
             duration = state.get("audio_duration")
             long_audio_note = ""
-            if key == "diarization" and duration and duration >= 10 * 60:
+            if (
+                key == "diarization"
+                and not use_gpu.value
+                and duration
+                and duration >= 10 * 60
+            ):
                 long_audio_note = (
                     f" • Audio {duration / 60:.1f} phút; chạy CPU có thể mất khá lâu. "
                     "App vẫn đang xử lý nếu CPU còn hoạt động."
@@ -243,6 +278,7 @@ def run_flet_app() -> None:
         def run_worker() -> None:
             try:
                 value = float(threshold.value.strip())
+                runtime = runtime_inference_options(bool(use_gpu.value))
                 requests = [
                     EnrollmentRequest(
                         speaker_id=item["speaker_id"],
@@ -260,6 +296,9 @@ def run_flet_app() -> None:
                         include_saved_profiles=include_saved.value,
                         enhance_audio=enhance.value,
                         skip_asr=skip_asr.value,
+                        device=str(runtime["device"]),
+                        asr_provider=str(runtime["asr_provider"]),
+                        asr_batch_size=int(runtime["asr_batch_size"]),
                     ),
                     enrollments=requests,
                     progress=on_progress,
@@ -306,6 +345,10 @@ def run_flet_app() -> None:
                     )
                 results.controls = [
                     ft.Text("Kết quả", size=22, weight=ft.FontWeight.BOLD),
+                    ft.Text(
+                        runtime_inference_label(runtime["mode"] == "gpu"),
+                        color=ft.Colors.GREEN_700,
+                    ),
                     ft.Text(count_summary, color=ft.Colors.INDIGO_700),
                     ft.Text(
                         summary or "Không phát hiện người nói",
@@ -336,10 +379,11 @@ def run_flet_app() -> None:
                     f"Thông tin kỹ thuật: {paths['result']}"
                 )
                 has_important_warnings = bool(warning_rows)
+                mode_name = str(runtime["mode"]).upper()
                 status.value = (
-                    "Hoàn tất, có cảnh báo cần kiểm tra."
+                    f"Hoàn tất bằng {mode_name}, có cảnh báo cần kiểm tra."
                     if has_important_warnings
-                    else "Hoàn tất. Kết quả JSON đã được ghi ra thư mục job."
+                    else f"Hoàn tất bằng {mode_name}. Kết quả đã được ghi ra thư mục job."
                 )
                 status.color = (
                     ft.Colors.ORANGE_800
@@ -407,7 +451,8 @@ def run_flet_app() -> None:
 
         def enroll_worker() -> None:
             try:
-                embedder = CAMPPlusEmbedder()
+                runtime = runtime_inference_options(bool(use_gpu.value))
+                embedder = CAMPPlusEmbedder(device=str(runtime["device"]))
                 identifier = db_id.value.strip() or safe_speaker_id(db_name.value)
                 enroll_speaker(
                     identifier,
@@ -416,7 +461,10 @@ def run_flet_app() -> None:
                     embedder,
                     VOICE_DB_PATH,
                 )
-                db_status.value = f"Đã lưu mẫu cho {db_name.value.strip()}."
+                db_status.value = (
+                    f"Đã lưu mẫu cho {db_name.value.strip()} bằng "
+                    f"{str(runtime['mode']).upper()}."
+                )
                 db_status.color = ft.Colors.GREEN_700
                 state["db_samples"] = []
                 db_sample_label.value = "Chưa chọn sample"
@@ -452,6 +500,15 @@ def run_flet_app() -> None:
 
         run_button.on_click = start_run
         enroll_button.on_click = start_enroll
+
+        def update_runtime_mode(_=None) -> None:
+            runtime_hint.value = runtime_inference_label(bool(use_gpu.value))
+            runtime_hint.color = (
+                ft.Colors.GREEN_700 if use_gpu.value else ft.Colors.BLUE_700
+            )
+            page.update()
+
+        use_gpu.on_change = update_runtime_mode
 
         analysis_controls = ft.Column(
             [
@@ -504,6 +561,8 @@ def run_flet_app() -> None:
                             content=ft.Column(
                                 [
                                     ft.Text("3. Tinh lọc & định danh", size=18, weight=ft.FontWeight.W_600),
+                                    ft.Row([use_gpu]),
+                                    runtime_hint,
                                     ft.Row([cluster_map, hard_override]),
                                     ft.Row([threshold, include_saved], wrap=True),
                                     ft.Row([enhance, skip_asr], wrap=True),

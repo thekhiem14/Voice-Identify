@@ -1,5 +1,6 @@
-# PyTorch CUDA 12.8 wheels. They also provide CUDA 12/cuDNN 9 DLLs for sherpa-onnx.
---extra-index-url https://download.pytorch.org/whl/cu128
+# CPU is the portable baseline. scripts/install_gpu.ps1 upgrades these wheels
+# and installs sherpa-onnx CUDA DLLs when GPU mode is wanted.
+--extra-index-url https://download.pytorch.org/whl/cpu
 
 # Core audio and model runtimes
 numpy>=1.26,<3
@@ -8,8 +9,8 @@ scipy>=1.11
 toml>=0.10
 huggingface-hub>=0.30,<1
 pyyaml>=6
-torch==2.11.0+cu128; sys_platform == "win32"
-torchaudio==2.11.0+cu128; sys_platform == "win32"
+torch==2.11.0+cpu; sys_platform == "win32"
+torchaudio==2.11.0+cpu; sys_platform == "win32"
 torch>=2.2; sys_platform != "win32"
 torchaudio>=2.2; sys_platform != "win32"
 sherpa-onnx==1.13.3

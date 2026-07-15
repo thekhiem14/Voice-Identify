@@ -24,7 +24,8 @@ giữ cho các tầng diarization và voice identify.
 ## Cài đặt
 
 Yêu cầu: Windows, Python 3.11 được khuyến nghị, Git, FFmpeg và khoảng trống đủ
-cho checkpoint. CUDA được tự động sử dụng nếu bản PyTorch đang cài hỗ trợ GPU.
+cho checkpoint. Bộ cài mặc định dùng PyTorch CPU để chạy được cả trên máy không
+có NVIDIA.
 
 ```powershell
 cd meeting-insight-app
@@ -40,12 +41,14 @@ Nếu môi trường cũ đã cài PyTorch CPU, đóng mọi cửa sổ đang ch
 powershell -ExecutionPolicy Bypass -File scripts/install_gpu.ps1
 ```
 
-Script cài `torch`/`torchaudio` CUDA 12.8, dependency khử nhiễu và kiểm tra
-`torch.cuda.is_available()` trước khi báo thành công. Cấu hình mặc định dùng `cuda:0`,
-DiariZen và CAM++ dùng GPU; Gipformer mặc định dùng `provider=cpu` và decode
-tuần tự (`ASR_BATCH_SIZE=1`) giống notebook. Cấu hình này tránh tranh chấp VRAM,
-tránh attention encoder tạo allocation hơn 1 GB và trên máy thử nghiệm còn nhanh
-hơn CUDA tuần tự. Có thể bật `ASR_PROVIDER=cuda`, nhưng nên giữ batch size 1.
+Script GPU nâng `torch`/`torchaudio` lên CUDA 12.8, cài DLL sherpa-onnx CUDA và
+kiểm tra `torch.cuda.is_available()`. Trong UI, công tắc **Dùng GPU cho toàn
+pipeline** chuyển đồng bộ DiariZen, enhancement, CAM++ và Gipformer giữa hai mode:
+
+- Tắt: toàn bộ inference chạy CPU; DiariZen dùng batch 1 để giới hạn RAM.
+- Bật: toàn bộ inference chạy CUDA; Gipformer vẫn decode batch 1 để tránh lỗi
+  attention encoder cấp phát hơn 1 GB VRAM.
+
 CAM++ ghép tối đa 16 cửa sổ có cùng chính xác độ dài feature trong một batch
 (`VOICE_ID_BATCH_SIZE=16`), nên không cần padding và không làm lệch embedding.
 
@@ -76,8 +79,10 @@ Luồng sử dụng nhanh:
 1. Chọn audio cuộc họp.
 2. Nhập tên, chọn một hoặc nhiều sample rồi bấm **Thêm người**. Có thể bỏ qua
    nếu đã lưu các người nói trong tab **Kho mẫu giọng**.
-3. Tùy chọn nhập `1=0` để gộp cluster hoặc `2=Hưng` để ép tên cluster.
-4. Bấm **Chạy pipeline**. Mỗi lần chạy tạo một job riêng trong `outputs/`.
+3. Chọn CPU hoặc bật **Dùng GPU cho toàn pipeline**. Máy chưa chạy
+   `scripts/install_gpu.ps1` phải để CPU.
+4. Tùy chọn nhập `1=0` để gộp cluster hoặc `2=Hưng` để ép tên cluster.
+5. Bấm **Chạy pipeline**. Mỗi lần chạy tạo một job riêng trong `outputs/`.
 
 Sample không bắt buộc. Khi không có profile dùng được, app vẫn chạy DiariZen và
 Gipformer, sau đó đặt tên tạm `Speaker 1`, `Speaker 2`... theo cluster.

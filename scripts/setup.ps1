@@ -12,8 +12,8 @@ Set-Location $AppRoot
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 
-python -c "import torch; assert torch.cuda.is_available(), f'PyTorch CUDA is not available: torch={torch.__version__}, build={torch.version.cuda}'; print(f'CUDA OK: {torch.cuda.get_device_name(0)} | torch={torch.__version__} | CUDA runtime={torch.version.cuda}')"
-python -c "import noisereduce, nara_wpe, sherpa_onnx; print('Enhancement and Gipformer dependencies: OK')"
+python -c "import torch; x=torch.ones(2); print(f'PyTorch CPU OK: torch={torch.__version__}, sum={x.sum().item()}')"
+python -c "import noisereduce, nara_wpe, sherpa_onnx; print('CPU enhancement and Gipformer dependencies: OK')"
 
 if (-not (Test-Path (Join-Path $DiariZen ".git"))) {
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $DiariZen) | Out-Null
@@ -30,7 +30,5 @@ if (-not $SkipModels) {
     python scripts/download_models.py
 }
 
-# Install/verify the official sherpa-onnx CUDA provider after the Python wheel.
-& (Join-Path $PSScriptRoot "install_gpu.ps1") -SkipDependencies
-
 Write-Host "Setup complete. Start the app with: python app.py"
+Write-Host "Optional GPU mode: run scripts/install_gpu.ps1, then enable GPU in the UI."

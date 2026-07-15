@@ -10,6 +10,10 @@ Write-Host "IMPORTANT: Close every running 'python app.py' window before continu
 Write-Host "Checking PyTorch CUDA 12.8..."
 
 python -m pip install --upgrade pip
+if (-not $SkipDependencies) {
+    python -m pip install -r requirements.txt
+}
+
 python -c "import torch, sys; sys.exit(0 if torch.cuda.is_available() and str(torch.__version__).endswith('+cu128') else 1)"
 if ($LASTEXITCODE -ne 0) {
     Write-Host "Installing PyTorch CUDA 12.8 for NVIDIA GPU..."
@@ -17,10 +21,6 @@ if ($LASTEXITCODE -ne 0) {
         torch==2.11.0+cu128 `
         torchaudio==2.11.0+cu128 `
         --index-url https://download.pytorch.org/whl/cu128
-}
-
-if (-not $SkipDependencies) {
-    python -m pip install -r requirements.txt
 }
 
 python -c "import torch; assert torch.cuda.is_available(), f'CUDA unavailable: torch={torch.__version__}, build={torch.version.cuda}'; p=torch.cuda.get_device_properties(0); print(f'CUDA OK: {torch.cuda.get_device_name(0)} | VRAM={p.total_memory/1024**3:.1f} GB | torch={torch.__version__} | runtime={torch.version.cuda}')"

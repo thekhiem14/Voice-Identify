@@ -12,6 +12,7 @@ from core.pipeline import (
     run_pipeline,
 )
 from config.settings import SETTINGS, VOICE_DB_PATH
+from ui.main_layout import runtime_inference_label, runtime_inference_options
 
 
 def test_default_voice_verification_threshold_matches_campplus_checkpoint() -> None:
@@ -32,6 +33,26 @@ def test_notebook_asr_operating_point_is_the_default() -> None:
     options = PipelineOptions()
     assert options.asr_provider == "cpu"
     assert options.asr_batch_size == 1
+
+
+def test_ui_runtime_toggle_switches_every_inference_stage() -> None:
+    cpu = runtime_inference_options(False)
+    gpu = runtime_inference_options(True)
+
+    assert cpu == {
+        "mode": "cpu",
+        "device": "cpu",
+        "asr_provider": "cpu",
+        "asr_batch_size": 1,
+    }
+    assert gpu["mode"] == "gpu"
+    assert str(gpu["device"]).startswith("cuda")
+    assert gpu["asr_provider"] == "cuda"
+    assert gpu["asr_batch_size"] == 1
+    assert "không sử dụng CUDA" in runtime_inference_label(False)
+    assert "đều chạy CUDA" in runtime_inference_label(True)
+    assert SETTINGS.diarization_cpu_batch_size == 1
+    assert SETTINGS.device == "cpu"
 
 
 def test_public_transcript_has_minimal_shape_and_merges_same_speaker() -> None:

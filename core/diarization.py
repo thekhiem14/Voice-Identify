@@ -68,6 +68,12 @@ def run_diarization(
             "[GPU] DiariZen segmentation batch_size="
             f"{SETTINGS.diarization_gpu_batch_size} (tối ưu cho VRAM 6 GB)"
         )
+    else:
+        pipeline._segmentation.batch_size = SETTINGS.diarization_cpu_batch_size
+        log(
+            "[CPU] DiariZen segmentation batch_size="
+            f"{SETTINGS.diarization_cpu_batch_size} (giới hạn RAM)"
+        )
 
     _attach_progress_logging(pipeline, log, SETTINGS.progress_log_every)
 
