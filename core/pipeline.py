@@ -119,6 +119,7 @@ def run_pipeline(
             "source_audio": str(source_audio),
             "failed_at": datetime.now(timezone.utc).isoformat(),
             "runtime_seconds": round(time.perf_counter() - started, 3),
+            "runtime_mode": _runtime_mode(options),
             "error_type": type(exc).__name__,
             "message": str(exc),
             "options": _safe_options(options),
@@ -151,6 +152,11 @@ def _execute_pipeline(
     work_dir.mkdir(parents=True, exist_ok=True)
     step_times: dict[str, float] = {}
     warnings: list[dict] = []
+    runtime_mode = _runtime_mode(options)
+    _runtime_log(
+        f"[TIMING][{runtime_mode.upper()}] START job={job_id} "
+        f"device={options.device} asr_provider={options.asr_provider}"
+    )
 
     def add_warning(code: str, message: str, severity: str = "warning", **context) -> None:
         warnings.append(
@@ -161,6 +167,14 @@ def _execute_pipeline(
         if progress:
             progress(number, 8, key, message)
         return time.perf_counter()
+
+    def finish_step(key: str, tick: float) -> None:
+        elapsed = time.perf_counter() - tick
+        step_times[key] = elapsed
+        _runtime_log(
+            f"[TIMING][{runtime_mode.upper()}] {key}={elapsed:.3f}s "
+            f"total_elapsed={time.perf_counter() - started:.3f}s"
+        )
 
     # 1. Preprocessing and signal validation
     tick = step(1, "preprocessing", "Chuẩn hóa và kiểm tra audio mono 16 kHz")
@@ -203,7 +217,7 @@ def _execute_pipeline(
             "very_long_audio",
             "Audio dài hơn 4 giờ; nên chia file để tránh thiếu RAM/VRAM.",
         )
-    step_times["preprocessing"] = time.perf_counter() - tick
+    finish_step("preprocessing", tick)
 
     # 2. Diarization. Silence and unusably short input are intentionally empty.
     tick = step(2, "diarization", "DiariZen đang phân đoạn và gom cụm người nói")
@@ -220,7 +234,7 @@ def _execute_pipeline(
     _runtime_log(f"[Pipeline] Diarization trả về {len(raw_segments)} segment thô")
     if not raw_segments:
         add_warning("no_speech_detected", "Không phát hiện segment lời nói nào.", "info")
-    step_times["diarization"] = time.perf_counter() - tick
+    finish_step("diarization", tick)
 
     # 3. Mapping validation, refinement and merge
     tick = step(3, "refinement", "Ánh xạ cluster và ghép các lượt nói gần nhau")
@@ -241,7 +255,7 @@ def _execute_pipeline(
     )
     refined_labels = {item.cluster for item in refined_segments}
     _mapping_warnings(options.hard_overrides, refined_labels, "hard_override", add_warning)
-    step_times["refinement"] = time.perf_counter() - tick
+    finish_step("refinement", tick)
 
     # 4. Build usable profiles. Invalid samples/profiles do not discard valid ones.
     profiles = []
@@ -309,7 +323,7 @@ def _execute_pipeline(
             "Không có sample hợp lệ; dùng tên tạm Speaker 1, Speaker 2...",
             "info",
         )
-    step_times["enrollment"] = time.perf_counter() - tick
+    finish_step("enrollment", tick)
 
     # 5. Per-segment verification
     tick = step(5, "verification", "So khớp cosine từng segment với profile")
@@ -366,7 +380,7 @@ def _execute_pipeline(
             identity_segments,
             "disabled" if options.skip_identify else "no_profiles",
         )
-    step_times["verification"] = time.perf_counter() - tick
+    finish_step("verification", tick)
 
     # 6. Mixed-cluster-aware smoothing and n/k reconciliation
     tick = step(6, "smoothing", "Phát hiện cluster trộn, vote và hard override")
@@ -381,7 +395,7 @@ def _execute_pipeline(
     )
     reconciliation = reconcile_speaker_counts(identities, cluster_summaries, profiles)
     _reconciliation_warnings(reconciliation, add_warning)
-    step_times["smoothing"] = time.perf_counter() - tick
+    finish_step("smoothing", tick)
 
     # Match the notebook's ASR timeline: Gipformer receives merged diarization
     # turns instead of the shorter windows needed by CAM++.
@@ -439,7 +453,7 @@ def _execute_pipeline(
             "Một số segment ASR lỗi; các segment còn lại vẫn được giữ.",
             segments=asr_errors,
         )
-    step_times["asr"] = time.perf_counter() - tick
+    finish_step("asr", tick)
 
     # 8. Structured output
     tick = step(8, "output", "Đang ghi JSON kết quả, warning và artifact")
@@ -456,6 +470,7 @@ def _execute_pipeline(
         "schema_version": "1.1",
         "status": run_status,
         "job_id": job_id,
+        "runtime_mode": runtime_mode,
         "source_audio": str(source_audio),
         "duration_seconds": round(duration_seconds, 3),
         "sample_rate": SETTINGS.sample_rate,
@@ -482,11 +497,19 @@ def _execute_pipeline(
     paths["transcript_text"].write_text(
         _build_transcript_text(transcript_payload), encoding="utf-8"
     )
-    step_times["output"] = time.perf_counter() - tick
+    finish_step("output", tick)
+    runtime_seconds = time.perf_counter() - started
+    realtime_factor = runtime_seconds / duration_seconds if duration_seconds > 0 else None
     metrics_payload = {
         "job_id": job_id,
         "status": run_status,
-        "runtime_seconds": round(time.perf_counter() - started, 3),
+        "runtime_mode": runtime_mode,
+        "runtime_seconds": round(runtime_seconds, 3),
+        "audio_duration_seconds": round(duration_seconds, 3),
+        "realtime_factor": round(realtime_factor, 4) if realtime_factor is not None else None,
+        "audio_seconds_per_runtime_second": (
+            round(1.0 / realtime_factor, 4) if realtime_factor else None
+        ),
         "step_runtime_seconds": {
             key: round(value, 3) for key, value in step_times.items()
         },
@@ -520,6 +543,13 @@ def _execute_pipeline(
     }
     result_payload["metrics"] = metrics_payload
     _write_json(paths["result"], result_payload)
+    final_runtime = time.perf_counter() - started
+    final_rtf = final_runtime / duration_seconds if duration_seconds > 0 else None
+    rtf_text = f" rtf={final_rtf:.4f}" if final_rtf is not None else ""
+    _runtime_log(
+        f"[TIMING][{runtime_mode.upper()}] COMPLETE job={job_id} "
+        f"runtime={final_runtime:.3f}s audio={duration_seconds:.3f}s{rtf_text}"
+    )
     return paths
 
 
@@ -712,6 +742,16 @@ def _clock(seconds: float) -> str:
     minutes = int((seconds % 3600) // 60)
     remainder = seconds % 60
     return f"{hours:02d}:{minutes:02d}:{remainder:05.2f}"
+
+
+def _runtime_mode(options: PipelineOptions) -> str:
+    torch_cuda = str(options.device or "").casefold().startswith("cuda")
+    asr_cuda = options.asr_provider.casefold() == "cuda"
+    if torch_cuda and asr_cuda:
+        return "gpu"
+    if not torch_cuda and not asr_cuda:
+        return "cpu"
+    return "hybrid"
 
 
 def _validate_options(options: PipelineOptions) -> None:

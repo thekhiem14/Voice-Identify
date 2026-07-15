@@ -12,7 +12,12 @@ from core.pipeline import (
     run_pipeline,
 )
 from config.settings import SETTINGS, VOICE_DB_PATH
-from ui.main_layout import runtime_inference_label, runtime_inference_options
+from ui.main_layout import (
+    format_runtime_comparison,
+    format_timing_summary,
+    runtime_inference_label,
+    runtime_inference_options,
+)
 
 
 def test_default_voice_verification_threshold_matches_campplus_checkpoint() -> None:
@@ -53,6 +58,41 @@ def test_ui_runtime_toggle_switches_every_inference_stage() -> None:
     assert "đều chạy CUDA" in runtime_inference_label(True)
     assert SETTINGS.diarization_cpu_batch_size == 1
     assert SETTINGS.device == "cpu"
+
+
+def test_timing_summary_is_copyable_for_cpu_gpu_comparison() -> None:
+    rows = format_timing_summary(
+        {
+            "runtime_mode": "cpu",
+            "runtime_seconds": 12.5,
+            "audio_duration_seconds": 25.0,
+            "realtime_factor": 0.5,
+            "audio_seconds_per_runtime_second": 2.0,
+            "step_runtime_seconds": {"diarization": 7.25, "asr": 3.5},
+        }
+    )
+
+    assert rows == [
+        "[CPU] Tổng: 12.500s • Audio: 25.000s • RTF: 0.5000 • Tốc độ: 2.00x realtime",
+        "DiariZen: 7.250s",
+        "Gipformer ASR: 3.500s",
+    ]
+
+    comparison = format_runtime_comparison(
+        {
+            "runtime_seconds": 20.0,
+            "step_runtime_seconds": {"diarization": 12.0, "asr": 6.0},
+        },
+        {
+            "runtime_seconds": 10.0,
+            "step_runtime_seconds": {"diarization": 4.0, "asr": 5.0},
+        },
+    )
+    assert comparison == [
+        "Tổng: CPU 20.000s • GPU 10.000s • GPU nhanh hơn 2.00x",
+        "DiariZen: CPU 12.000s • GPU 4.000s • CPU/GPU 3.00x",
+        "Gipformer ASR: CPU 6.000s • GPU 5.000s • CPU/GPU 1.20x",
+    ]
 
 
 def test_public_transcript_has_minimal_shape_and_merges_same_speaker() -> None:
@@ -197,3 +237,6 @@ def test_pipeline_keeps_voice_id_windows_separate_from_asr_segments(
     assert payload["metrics"]["asr_segments"] == 1
     assert payload["metrics"]["options"]["asr_provider"] == "cpu"
     assert payload["metrics"]["options"]["asr_batch_size"] == 1
+    assert payload["metrics"]["runtime_mode"] == "cpu"
+    assert payload["metrics"]["audio_duration_seconds"] == 12.0
+    assert payload["metrics"]["realtime_factor"] >= 0

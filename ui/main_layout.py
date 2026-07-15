@@ -19,6 +19,16 @@ from ui.components.transcript_view import build_transcript_view, load_result
 
 
 AUDIO_EXTENSIONS = ["wav", "mp3", "m4a", "flac", "ogg", "aac", "mp4"]
+TIMING_LABELS = {
+    "preprocessing": "Preprocess",
+    "diarization": "DiariZen",
+    "refinement": "Merge/refine",
+    "enrollment": "CAM++ enrollment",
+    "verification": "CAM++ verification",
+    "smoothing": "Voice-ID smoothing",
+    "asr": "Gipformer ASR",
+    "output": "Ghi output",
+}
 
 
 def runtime_inference_options(use_gpu: bool) -> dict[str, object]:
@@ -39,6 +49,57 @@ def runtime_inference_label(use_gpu: bool) -> str:
     if use_gpu:
         return "GPU: DiariZen, CAM++ và Gipformer đều chạy CUDA"
     return "CPU: toàn bộ pipeline chạy trên CPU, không sử dụng CUDA"
+
+
+def format_timing_summary(metrics: dict) -> list[str]:
+    """Create compact, copyable timing rows for CPU/GPU comparison."""
+    mode = str(metrics.get("runtime_mode", "unknown")).upper()
+    runtime = float(metrics.get("runtime_seconds", 0.0) or 0.0)
+    audio = float(metrics.get("audio_duration_seconds", 0.0) or 0.0)
+    rtf = metrics.get("realtime_factor")
+    speed = metrics.get("audio_seconds_per_runtime_second")
+    summary = f"[{mode}] Tổng: {runtime:.3f}s • Audio: {audio:.3f}s"
+    if rtf is not None:
+        summary += f" • RTF: {float(rtf):.4f}"
+    if speed is not None:
+        summary += f" • Tốc độ: {float(speed):.2f}x realtime"
+    rows = [summary]
+    step_times = metrics.get("step_runtime_seconds", {})
+    for key, label in TIMING_LABELS.items():
+        if key in step_times:
+            rows.append(f"{label}: {float(step_times[key]):.3f}s")
+    return rows
+
+
+def format_runtime_comparison(cpu: dict, gpu: dict) -> list[str]:
+    """Compare two runs of the same audio, using CPU as the baseline."""
+    cpu_total = float(cpu.get("runtime_seconds", 0.0) or 0.0)
+    gpu_total = float(gpu.get("runtime_seconds", 0.0) or 0.0)
+    if cpu_total <= 0 or gpu_total <= 0:
+        return []
+    ratio = cpu_total / gpu_total
+    winner = (
+        f"GPU nhanh hơn {ratio:.2f}x"
+        if ratio >= 1.0
+        else f"CPU nhanh hơn {1.0 / ratio:.2f}x"
+    )
+    rows = [
+        f"Tổng: CPU {cpu_total:.3f}s • GPU {gpu_total:.3f}s • {winner}"
+    ]
+    cpu_steps = cpu.get("step_runtime_seconds", {})
+    gpu_steps = gpu.get("step_runtime_seconds", {})
+    for key, label in TIMING_LABELS.items():
+        if key not in cpu_steps or key not in gpu_steps:
+            continue
+        cpu_time = float(cpu_steps[key])
+        gpu_time = float(gpu_steps[key])
+        if cpu_time <= 0 or gpu_time <= 0:
+            continue
+        rows.append(
+            f"{label}: CPU {cpu_time:.3f}s • GPU {gpu_time:.3f}s • "
+            f"CPU/GPU {cpu_time / gpu_time:.2f}x"
+        )
+    return rows
 
 
 def run_flet_app() -> None:
@@ -70,6 +131,7 @@ def run_flet_app() -> None:
             "db_samples": [],
             "last_result": None,
             "audio_duration": None,
+            "timing_by_mode": {},
         }
         run_lock = threading.Lock()
 
@@ -305,6 +367,25 @@ def run_flet_app() -> None:
                 )
                 payload = load_result(paths["result"])
                 transcript = load_result(paths["transcript"])
+                metrics = payload.get("metrics", {})
+                timing_rows = format_timing_summary(metrics)
+                timing_mode = metrics.get("runtime_mode")
+                if timing_mode in {"cpu", "gpu"}:
+                    state["timing_by_mode"][timing_mode] = {
+                        "source_audio": payload.get("source_audio"),
+                        "metrics": metrics,
+                    }
+                cpu_run = state["timing_by_mode"].get("cpu")
+                gpu_run = state["timing_by_mode"].get("gpu")
+                comparison_rows = []
+                if (
+                    cpu_run
+                    and gpu_run
+                    and cpu_run["source_audio"] == gpu_run["source_audio"]
+                ):
+                    comparison_rows = format_runtime_comparison(
+                        cpu_run["metrics"], gpu_run["metrics"]
+                    )
                 state["last_result"] = str(paths["result"])
                 clusters = payload.get("clusters", {})
                 summary = " • ".join(
@@ -348,6 +429,43 @@ def run_flet_app() -> None:
                     ft.Text(
                         runtime_inference_label(runtime["mode"] == "gpu"),
                         color=ft.Colors.GREEN_700,
+                    ),
+                    ft.Container(
+                        content=ft.Column(
+                            [
+                                ft.Text("Thời gian inference", weight=ft.FontWeight.BOLD),
+                                *[
+                                    ft.Text(row, size=12, selectable=True)
+                                    for row in timing_rows
+                                ],
+                                ft.Text(
+                                    "RTF càng thấp càng nhanh. Timing gồm cả tải model; "
+                                    "nên chạy mỗi mode hai lần trên cùng file để so công bằng.",
+                                    size=11,
+                                    color=ft.Colors.GREY_600,
+                                ),
+                            ],
+                            spacing=3,
+                        ),
+                        padding=10,
+                        bgcolor=ft.Colors.BLUE_50,
+                        border_radius=8,
+                    ),
+                    ft.Container(
+                        content=ft.Column(
+                            [
+                                ft.Text("So sánh CPU và GPU", weight=ft.FontWeight.BOLD),
+                                *[
+                                    ft.Text(row, size=12, selectable=True)
+                                    for row in comparison_rows
+                                ],
+                            ],
+                            spacing=3,
+                        ),
+                        padding=10,
+                        bgcolor=ft.Colors.GREEN_50,
+                        border_radius=8,
+                        visible=bool(comparison_rows),
                     ),
                     ft.Text(count_summary, color=ft.Colors.INDIGO_700),
                     ft.Text(

@@ -84,6 +84,13 @@ Luồng sử dụng nhanh:
 4. Tùy chọn nhập `1=0` để gộp cluster hoặc `2=Hưng` để ép tên cluster.
 5. Bấm **Chạy pipeline**. Mỗi lần chạy tạo một job riêng trong `outputs/`.
 
+Console ghi từng stage theo dạng `[TIMING][CPU] diarization=...` hoặc
+`[TIMING][GPU] asr=...`, rồi ghi tổng thời gian và RTF khi hoàn tất. UI hiển thị
+cùng số liệu; nếu chạy cùng một file lần lượt bằng CPU và GPU trong cùng phiên,
+app tự hiện tỷ lệ nhanh/chậm tổng và cho từng stage. RTF càng thấp càng nhanh.
+Timing bao gồm thời gian tải model; nên chạy mỗi mode hai lần trên cùng file và
+so các lượt sau để giảm sai lệch cold-start/cache.
+
 Sample không bắt buộc. Khi không có profile dùng được, app vẫn chạy DiariZen và
 Gipformer, sau đó đặt tên tạm `Speaker 1`, `Speaker 2`... theo cluster.
 
@@ -132,6 +139,10 @@ Mỗi job thành công chỉ gồm 3 file:
 - `transcript.json`: output chính, tối giản `segments[{speaker,start,end,text}]`.
 - `transcript.txt`: biên bản dễ mở bằng Notepad.
 - `result.json`: cảnh báo, cosine, cluster và thời gian chạy dành cho kiểm tra kỹ thuật.
+
+`result.json.metrics` gồm `runtime_mode`, `runtime_seconds`,
+`audio_duration_seconds`, `realtime_factor`, `audio_seconds_per_runtime_second`
+và `step_runtime_seconds`, đủ để so sánh lại ngoài UI.
 
 `failure.json` chỉ xuất hiện nếu pipeline thất bại. Audio chuẩn hóa, audio khử nhiễu,
 mẫu cluster và các file trong `work/` đều là tạm thời và được tự động xóa sau khi chạy.
