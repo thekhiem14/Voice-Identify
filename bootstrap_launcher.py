@@ -26,11 +26,23 @@ class BootstrapWindow:
         self.progress.pack(fill="x", padx=14, pady=4)
         buttons = tk.Frame(root)
         buttons.pack(pady=10)
-        tk.Button(buttons, text="Cài CPU", width=18, command=lambda: self.start(False)).pack(side="left", padx=5)
-        tk.Button(buttons, text="Cài GPU NVIDIA", width=18, command=lambda: self.start(True)).pack(side="left", padx=5)
+        self.cpu_button = tk.Button(buttons, text="Cài CPU", width=18, command=lambda: self.start(False))
+        self.cpu_button.pack(side="left", padx=5)
+        self.gpu_button = tk.Button(buttons, text="Cài GPU NVIDIA", width=18, command=lambda: self.start(True))
+        self.gpu_button.pack(side="left", padx=5)
         tk.Button(buttons, text="Mở app", width=18, command=self.launch, state="disabled").pack(side="left", padx=5)
         self.launch_button = buttons.winfo_children()[-1]
-        self.write("Chọn CPU hoặc GPU để cài runtime và tải model lần đầu.")
+        if self.ready():
+            self.write("Runtime và model đã sẵn sàng. Đang mở app...")
+            self.root.after(400, self.launch)
+        else:
+            self.write("Chọn CPU hoặc GPU để cài runtime và tải model lần đầu.")
+
+    def ready(self) -> bool:
+        root = app_root()
+        runtime = root / ".runtime" / "Scripts" / "python.exe"
+        models = root / "models"
+        return runtime.exists() and any(models.rglob("campplus_cn_en_common.pt")) and any(models.rglob("encoder-*.onnx"))
 
     def write(self, value: str) -> None:
         self.root.after(0, self._write, value)
@@ -42,6 +54,8 @@ class BootstrapWindow:
         self.log.configure(state="disabled")
 
     def start(self, gpu: bool) -> None:
+        self.cpu_button.configure(state="disabled")
+        self.gpu_button.configure(state="disabled")
         self.launch_button.configure(state="disabled")
         self.progress.start(12)
         threading.Thread(target=self._bootstrap, args=(gpu,), daemon=True).start()
@@ -67,6 +81,8 @@ class BootstrapWindow:
             self.root.after(0, lambda: self.launch_button.configure(state="normal"))
         else:
             self.write(f"Cài đặt thất bại, mã lỗi {code}.")
+            self.cpu_button.configure(state="normal")
+            self.gpu_button.configure(state="normal")
 
     def launch(self) -> None:
         script = app_root() / "scripts" / "run_test.ps1"
