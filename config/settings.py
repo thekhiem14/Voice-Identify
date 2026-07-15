@@ -1,12 +1,19 @@
 from __future__ import annotations
 
 import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
 
-ROOT_DIR = Path(__file__).resolve().parents[1]
+# A one-folder PyInstaller build keeps the executable, models and writable
+# user data together.  In normal development retain the repository root.
+ROOT_DIR = (
+    Path(sys.executable).resolve().parent
+    if getattr(sys, "frozen", False)
+    else Path(__file__).resolve().parents[1]
+)
 ENV_PATH = ROOT_DIR / ".env"
 DATA_DIR = ROOT_DIR / "data"
 CACHE_DIR = DATA_DIR / "cache"
@@ -23,6 +30,14 @@ DIARIZEN_DIR = MODELS_DIR / "diarizen"
 # this fallback avoids forcing users to clone a second 3D-Speaker checkout.
 VENDORED_3D_SPEAKER_DIR = MODELS_DIR / "3D-Speaker"
 LEGACY_3D_SPEAKER_DIR = CAMPPLUS_DIR / "3D-Speaker"
+
+# DiariZen and 3D-Speaker deliberately remain outside the executable: their
+# source is needed by dynamically loaded models and keeping it beside the EXE
+# makes model updates possible without rebuilding the app.
+if getattr(sys, "frozen", False):
+    for _source_root in (DIARIZEN_DIR / "DiariZen", LEGACY_3D_SPEAKER_DIR):
+        if _source_root.is_dir() and str(_source_root) not in sys.path:
+            sys.path.insert(0, str(_source_root))
 
 
 def load_env_file(env_path: Path = ENV_PATH) -> None:
